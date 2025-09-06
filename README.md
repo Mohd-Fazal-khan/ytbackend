@@ -24,7 +24,7 @@ This is the backend server for the YouTube Demo App, built with [Node.js](https:
 1. **Clone the repository:**
 
    ```sh
-   git clone <your-repo-url>
+   git clone https://github.com/Mohd-Fazal-khan/ytbackend.git
    cd server
    ```
 
@@ -93,4 +93,4 @@ This project is licensed under the MIT License.
 
 ---
 
-**Contact:** For questions or support, please open an issue or reach
+**Created by:** Mohd Fazal Khan
