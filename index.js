@@ -1,4 +1,4 @@
-import "dotenv/config"; // Load environment variables
+import "dotenv/config";
 import express from "express";
 import mongoose from "mongoose";
 import axios from "axios";
@@ -8,86 +8,92 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ---------------------
-// MongoDB connection
-// ---------------------
+
 mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB connected"))
+  .connect(process.env.MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
+  .then(async () => {
+    console.log("MongoDB connected");
+
+    const videos = [
+      { videoId: "XV5LwKuk3zc" },
+      { videoId: "RbFRGuq9IK8" },
+      { videoId: "cMuif_hJGPI" },
+      { videoId: "Oz7dfpABY1Y" },
+      { videoId: "ViWe60tO5CM" },
+      { videoId: "yCpVXjOY6HY" },
+      { videoId: "5AfJ0N3MvpA" },
+      { videoId: "kMRWLz8G5SU" },
+      { videoId: "fqySz1Me2pI" },
+      { videoId: "KrruJTTwOgU" },
+    ];
+
+    const count = await Video.countDocuments();
+    if (count === 0) {
+      await Video.insertMany(videos);
+      console.log("10 videos inserted successfully");
+    } else {
+      console.log("Videos already exist in DB");
+    }
+  })
   .catch((err) => console.log(err));
 
-// ---------------------
-// Video Schema
-// ---------------------
+
 const videoSchema = new mongoose.Schema(
   {
-    videoId: String,
+    videoId: { type: String, required: true, unique: true },
   },
   { collection: "videos" }
 );
 
-const Video = mongoose.model("Video", videoSchema, "videos");
+const Video = mongoose.model("Video", videoSchema);
 
-// ---------------------
-// Helper: fetch YouTube metadata + channel logos
-// ---------------------
+
 const getYouTubeData = async (videoIds) => {
-  // Remove quotes and trim spaces
-  const cleanIds = videoIds.map((id) => id.replace(/"/g, "").trim());
+  if (!videoIds.length) return [];
 
-  if (cleanIds.length === 0) return [];
-
-  // Fetch video metadata
-  const videoUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${cleanIds.join(
-    ","
-  )}&key=${process.env.YOUTUBE_API_KEY}`;
+  const ids = videoIds.join(",");
+  const videoUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${ids}&key=${process.env.YOUTUBE_API_KEY}`;
   const videoRes = await axios.get(videoUrl);
-  const videoItems = videoRes.data.items || [];
-  console.log("YouTube API returned:", videoItems.length, "videos");
 
-  // Fetch channel logos
-  const channelIds = [...new Set(videoItems.map((item) => item.snippet.channelId))];
-  let channelMap = {};
-  if (channelIds.length > 0) {
-    const channelUrl = `https://www.googleapis.com/youtube/v3/channels?part=snippet&id=${channelIds.join(
-      ","
-    )}&key=${process.env.YOUTUBE_API_KEY}`;
-    const channelRes = await axios.get(channelUrl);
-    channelRes.data.items.forEach((ch) => {
-      channelMap[ch.id] = ch.snippet.thumbnails.default.url;
-    });
-  }
+  if (!videoRes.data.items.length) return [];
 
-  // Map videoId → enriched metadata, fallback placeholders for unavailable videos
-  return cleanIds.map((id) => {
-    const video = videoItems.find((v) => v.id === id);
-    if (video) {
-      return {
-        videoId: video.id,
-        title: video.snippet.title,
-        channelTitle: video.snippet.channelTitle,
-        thumbnail: video.snippet.thumbnails.high.url,
-        channelLogo: channelMap[video.snippet.channelId] || null,
-        duration: video.contentDetails.duration,
-      };
-    } else {
-      return {
-        videoId: id,
-        title: "Video unavailable",
-        channelTitle: "-",
-        thumbnail: "https://via.placeholder.com/320x180?text=No+Thumbnail",
-        channelLogo: "https://via.placeholder.com/50?text=Logo",
-        duration: "0",
-      };
-    }
+  const channelIds = [
+    ...new Set(videoRes.data.items.map((item) => item.snippet.channelId)),
+  ].join(",");
+  const channelUrl = `https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&id=${channelIds}&key=${process.env.YOUTUBE_API_KEY}`;
+  const channelRes = await axios.get(channelUrl);
+
+  const channelMap = {};
+  channelRes.data.items.forEach((ch) => {
+    channelMap[ch.id] = {
+      logo: ch.snippet.thumbnails?.default?.url || null,
+      subscribers: formatNumber(ch.statistics?.subscriberCount || "0"),
+    };
   });
+
+  return videoRes.data.items.map((item) => ({
+    videoId: item.id,
+    title: item.snippet.title,
+    channelTitle: item.snippet.channelTitle,
+    thumbnail: item.snippet.thumbnails?.high?.url || null,
+    channelLogo: channelMap[item.snippet.channelId]?.logo || null,
+    channelSubscribers: channelMap[item.snippet.channelId]?.subscribers || "0",
+    duration: item.contentDetails?.duration || null,
+  }));
 };
 
-// ---------------------
-// Routes
-// ---------------------
 
-// Get all videos
+function formatNumber(num) {
+  num = Number(num);
+  if (num >= 1e6) return (num / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+  if (num >= 1e3) return (num / 1e3).toFixed(1).replace(/\.0$/, "") + "K";
+  return num.toString();
+}
+
+
 app.get("/api/videos", async (req, res) => {
   try {
     const videos = await Video.find({});
@@ -99,22 +105,5 @@ app.get("/api/videos", async (req, res) => {
   }
 });
 
-// Get specific video by ID
-app.get("/api/videos/:videoId", async (req, res) => {
-  try {
-    const videoIdParam = req.params.videoId.replace(/"/g, "").trim();
-    const video = await Video.findOne({ videoId: videoIdParam });
-    if (!video) return res.status(404).json({ error: "Video not found" });
-
-    const enrichedVideo = await getYouTubeData([video.videoId]);
-    res.json(enrichedVideo[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ---------------------
-// Start server
-// ---------------------
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
