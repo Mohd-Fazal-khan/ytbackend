@@ -25,7 +25,7 @@ This is the backend server for the YouTube Demo App, built with [Node.js](https:
 
    ```sh
    git clone https://github.com/Mohd-Fazal-khan/ytbackend.git
-   cd server
+   
    ```
 
 2. **Install dependencies:**
